@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.json">
+  <title>Camera after window.open</title>
+  <style>
+    body { font: 15px -apple-system, sans-serif; margin: 16px; }
+    button { display: block; width: 100%; margin: 8px 0; padding: 12px; font-size: 16px; }
+    video { width: 100%; max-height: 200px; background: #000; }
+    pre { white-space: pre-wrap; font-size: 12px; background: #f3f3f3; padding: 8px; }
+  </style>
+</head>
+<body>
+  <h3>getUserMedia after window.open (Home Screen web app)</h3>
+  <button id="cam">1. Request camera</button>
+  <button id="stop">2. Stop camera</button>
+  <button id="open">3. window.open(external page, '_blank')</button>
+  <button id="openNamed">3b. window.open(external page, 'blank') — as in the app</button>
+  <button id="liveOpen">4. Camera ON, then window.open('blank') without stopping</button>
+  <button id="camExact">1b. Request back camera by deviceId (exact) — as in the app</button>
+  <video id="video" playsinline muted autoplay></video>
+  <pre id="log"></pre>
+  <script>
+    const log = (text) => {
+      const line = `${new Date().toISOString().slice(11, 23)} ${text}`;
+      document.getElementById('log').textContent += line + '\n';
+      console.log(line);
+    };
+    const video = document.getElementById('video');
+    let stream = null;
+
+    log(`start standalone=${navigator.standalone === true} ` +
+      `displayMode=${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'}`);
+    log(navigator.userAgent);
+    document.addEventListener('visibilitychange', () => log(`visibility=${document.visibilityState}`));
+
+    document.getElementById('cam').onclick = async () => {
+      const startedAt = performance.now();
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        video.srcObject = stream;
+        log(`getUserMedia OK ${Math.round(performance.now() - startedAt)}ms`);
+      } catch (error) {
+        log(`getUserMedia FAIL ${error.name}: ${error.message} ${Math.round(performance.now() - startedAt)}ms`);
+      }
+    };
+
+    document.getElementById('stop').onclick = () => {
+      stream?.getTracks().forEach((track) => track.stop());
+      stream = null;
+      video.srcObject = null;
+      log('tracks stopped');
+    };
+
+    const requestCamera = async (constraints, label) => {
+      const startedAt = performance.now();
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        log(`${label} OK ${Math.round(performance.now() - startedAt)}ms`);
+      } catch (error) {
+        log(`${label} FAIL ${error.name}: ${error.message} ${Math.round(performance.now() - startedAt)}ms`);
+      }
+    };
+
+    document.getElementById('camExact').onclick = async () => {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const back = devices.filter((d) => d.kind === 'videoinput' && !/front|передн/i.test(d.label));
+      const camera = back[0] || devices.find((d) => d.kind === 'videoinput');
+      if (!camera) {
+        log('no cameras in enumerateDevices (request camera once first)');
+        return;
+      }
+      await requestCamera({ video: { deviceId: { exact: camera.deviceId } } }, `getUserMedia exact [${camera.label}]`);
+    };
+
+    document.getElementById('liveOpen').onclick = async () => {
+      if (!stream) {
+        await requestCamera({ video: { facingMode: 'environment' } }, 'getUserMedia');
+      }
+      const live = stream?.getVideoTracks().map((t) => `${t.label}/${t.readyState}`).join(', ');
+      log(`window.open 'blank' with live camera [${live || 'none'}]`);
+      window.open('https://www.apple.com/', 'blank');
+    };
+
+    document.getElementById('openNamed').onclick = () => {
+      log(`window.open 'blank' (camera ${stream ? 'running' : 'stopped'})`);
+      window.open('https://www.apple.com/', 'blank');
+    };
+
+    document.getElementById('open').onclick = () => {
+      log(`window.open '_blank' (camera ${stream ? 'running' : 'stopped'})`);
+      window.open('https://www.apple.com/', '_blank');
+    };
+  </script>
+</body>
+</html>
