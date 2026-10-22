@@ -17,7 +17,9 @@
   <h3>getUserMedia after window.open (Home Screen web app)</h3>
   <button id="cam">1. Request camera</button>
   <button id="stop">2. Stop camera</button>
-  <button id="open">3. window.open(external page)</button>
+  <button id="open">3. window.open(external page, '_blank')</button>
+  <button id="openNamed">3b. window.open(external page, 'blank') — as in the app</button>
+  <button id="camExact">1b. Request back camera by deviceId (exact) — as in the app</button>
   <video id="video" playsinline muted autoplay></video>
   <pre id="log"></pre>
   <script>
@@ -52,8 +54,35 @@
       log('tracks stopped');
     };
 
+    const requestCamera = async (constraints, label) => {
+      const startedAt = performance.now();
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        log(`${label} OK ${Math.round(performance.now() - startedAt)}ms`);
+      } catch (error) {
+        log(`${label} FAIL ${error.name}: ${error.message} ${Math.round(performance.now() - startedAt)}ms`);
+      }
+    };
+
+    document.getElementById('camExact').onclick = async () => {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const back = devices.filter((d) => d.kind === 'videoinput' && !/front|передн/i.test(d.label));
+      const camera = back[0] || devices.find((d) => d.kind === 'videoinput');
+      if (!camera) {
+        log('no cameras in enumerateDevices (request camera once first)');
+        return;
+      }
+      await requestCamera({ video: { deviceId: { exact: camera.deviceId } } }, `getUserMedia exact [${camera.label}]`);
+    };
+
+    document.getElementById('openNamed').onclick = () => {
+      log(`window.open 'blank' (camera ${stream ? 'running' : 'stopped'})`);
+      window.open('https://www.apple.com/', 'blank');
+    };
+
     document.getElementById('open').onclick = () => {
-      log('window.open');
+      log(`window.open '_blank' (camera ${stream ? 'running' : 'stopped'})`);
       window.open('https://www.apple.com/', '_blank');
     };
   </script>
