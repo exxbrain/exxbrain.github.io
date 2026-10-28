@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Questionnaire frame</title></head>
+<body style="font: 14px -apple-system, sans-serif; margin: 8px;">
+  <label>Questionnaire field <input id="field" autofocus></label>
+  <button id="done" type="button">Submit</button>
+  <script>
+    document.getElementById('field').focus();
+    document.getElementById('done').onclick = () => parent.postMessage('done', '*');
+  </script>
+</body>
+</html>
