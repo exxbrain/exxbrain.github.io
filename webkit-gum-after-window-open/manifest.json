@@ -1,0 +1,9 @@
+{
+  "name": "getUserMedia after window.open",
+  "short_name": "GumRepro",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0a4a9e"
+}

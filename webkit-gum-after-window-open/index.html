@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<title>getUserMedia after window.open (home screen web app)</title>
+<style>
+  body { font: 15px -apple-system, sans-serif; margin: 0; padding: 12px 12px calc(12px + env(safe-area-inset-bottom)); }
+  h1 { font-size: 17px; margin: 4px 0 8px; }
+  button { display: block; width: 100%; margin: 6px 0; padding: 12px; font-size: 15px; border-radius: 8px; border: 1px solid #888; background: #f2f2f2; }
+  button.main { background: #0a4a9e; color: #fff; border-color: #0a4a9e; }
+  button.alt { background: #5b2a86; color: #fff; border-color: #5b2a86; }
+  #idle { font-weight: 600; margin: 6px 0; }
+  #result { margin: 8px 0; padding: 10px; border-radius: 8px; font-weight: 600; }
+  #result.ok { background: #d8f5d8; }
+  #result.fail { background: #fbd5d5; }
+  #stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000; display: none; }
+  #stage canvas { width: 100%; height: 100%; }
+  pre { white-space: pre-wrap; font-size: 11px; background: #f6f6f6; padding: 8px; max-height: 40vh; overflow: auto; }
+</style>
+</head>
+<body>
+<h1>getUserMedia after window.open in a home screen web app</h1>
+<div id="mode"></div>
+<button class="main" id="capture">1. Use the camera (like a document scanner)</button>
+<div id="idle">Camera not used yet</div>
+<button class="main" id="open">2. Open a page with window.open() (wait until the counter above is over 60 s)</button>
+<a id="openLink" target="_blank"><button type="button" class="alt">2a. Open the same page with a link, target="_blank"</button></a>
+<button class="alt" id="openNoopener">2b. Open the same page with window.open(url, '_blank', 'noopener')</button>
+<button class="main" id="request">3. Request the camera again</button>
+<div id="result"></div>
+<div id="stage"><canvas id="canvas"></canvas></div>
+<button id="copy">Copy log</button>
+<button id="reset">Reset log</button>
+<pre id="log"></pre>
+<script>
+(() => {
+  const KEY = 'gum-repro-log';
+  const logEl = document.getElementById('log');
+  const resultEl = document.getElementById('result');
+  const idleEl = document.getElementById('idle');
+  let lines = [];
+  try { lines = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { lines = []; }
+  const render = () => { logEl.textContent = lines.join('\n'); };
+  const log = (text) => {
+    lines.push(`${new Date().toISOString().slice(11, 23)} ${text}`);
+    lines = lines.slice(-300);
+    try { localStorage.setItem(KEY, JSON.stringify(lines)); } catch (e) { /* ignore */ }
+    render();
+  };
+  const sleep = (t) => new Promise((r) => setTimeout(r, t));
+  const errText = (e) => `${e && e.name}: ${e && e.message}`;
+  const permission = async () => {
+    try { return (await navigator.permissions.query({ name: 'camera' })).state; } catch (e) { return `n/a (${e && e.name})`; }
+  };
+  const state = () => `visibility=${document.visibilityState} hasFocus=${document.hasFocus()}`;
+
+  let lastStop = null;
+  const idleSeconds = () => (lastStop ? Math.round((Date.now() - lastStop) / 1000) : null);
+  const idleText = () => (lastStop ? `${idleSeconds()} s since the camera was stopped` : 'camera not used yet');
+  setInterval(() => { idleEl.textContent = lastStop ? `Camera stopped ${idleSeconds()} s ago` : 'Camera not used yet'; }, 1000);
+
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  document.getElementById('mode').textContent = `standalone=${standalone}`;
+  log(`page load standalone=${standalone} ${navigator.userAgent}`);
+  document.addEventListener('visibilitychange', async () => log(`visibilitychange ${state()} camera permission=${await permission()}`));
+  render();
+
+  const stopAll = async (stream) => {
+    for (const track of stream.getTracks()) { track.stop(); await sleep(50); }
+    lastStop = Date.now();
+  };
+
+  // Step 1: open each camera, then capture from back, front and back cameras for 8 s each
+  // (1920x1080 drawn to a canvas every frame). All tracks are stopped afterwards.
+  const capture = async () => {
+    const stage = document.getElementById('stage');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const video = document.createElement('video');
+    video.playsInline = true;
+    video.muted = true;
+    try {
+      const first = await navigator.mediaDevices.getUserMedia({ video: true });
+      await stopAll(first);
+      const inputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+      const cams = [];
+      for (const d of inputs) {
+        const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: d.deviceId } } });
+        const settings = s.getVideoTracks()[0].getSettings();
+        cams.push({ id: d.deviceId, label: d.label, front: settings.facingMode === 'user' || /front/i.test(d.label) });
+        await stopAll(s);
+      }
+      log(`cameras: ${cams.map((c) => `${c.label}${c.front ? ' (front)' : ''}`).join(' | ')}`);
+      const back = cams.find((c) => !c.front) || cams[0];
+      const front = cams.find((c) => c.front) || back;
+      stage.style.display = 'block';
+      for (const [name, cam] of [['back', back], ['front', front], ['back again', back]]) {
+        const s = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { width: { min: 1280, ideal: 1920 }, height: { min: 720, ideal: 1080 }, deviceId: cam.id },
+        });
+        video.srcObject = s;
+        await video.play();
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        let frames = 0;
+        const until = performance.now() + 8000;
+        await new Promise((resolve) => {
+          const loop = () => {
+            if (performance.now() > until) { resolve(); return; }
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            frames += 1;
+            requestAnimationFrame(loop);
+          };
+          loop();
+        });
+        video.srcObject = null;
+        await stopAll(s);
+        log(`capture "${name}" ${cam.label}: ${frames} frames, tracks stopped`);
+      }
+      stage.style.display = 'none';
+      log(`step 1 done: no live camera tracks, permission=${await permission()}`);
+    } catch (e) {
+      stage.style.display = 'none';
+      log(`step 1 FAIL ${errText(e)}`);
+    }
+  };
+
+  // Step 2: open another page in a new window (SFSafariViewController in a home screen web app).
+  // The opened page must be outside the web app scope (another origin), so iOS shows it in an in-app Safari view.
+  // On localhost the same files are served from 127.0.0.1; elsewhere any third-party page works.
+  const otherUrl = () => (location.hostname === 'localhost'
+    ? `${location.protocol}//127.0.0.1:${location.port}${location.pathname.replace(/[^/]*$/, '')}other.html?t=${Date.now()}`
+    : `https://example.org/?t=${Date.now()}`);
+  const open = () => {
+    const url = otherUrl();
+    const w = window.open(url, 'blank');
+    log(`step 2 window.open(${url}, 'blank') -> ${w ? 'WindowProxy' : 'null'}, ${idleText()}`);
+  };
+  // 2a: a regular link with target="_blank" instead of window.open
+  const link = document.getElementById('openLink');
+  link.href = otherUrl();
+  link.addEventListener('click', () => {
+    log(`step 2a link target=_blank ${link.href}, ${idleText()}`);
+    setTimeout(() => { link.href = otherUrl(); }, 1000);
+  });
+  // 2b: window.open with noopener (no reference between the web app and the opened page)
+  const openNoopener = () => {
+    const url = otherUrl();
+    const w = window.open(url, '_blank', 'noopener');
+    log(`step 2b window.open(${url}, '_blank', 'noopener') -> ${w ? 'WindowProxy' : 'null'}, ${idleText()}`);
+  };
+
+  // Step 3: getUserMedia directly in the click handler.
+  const request = async () => {
+    const idle = idleText();
+    const before = await permission();
+    const t0 = performance.now();
+    let ok = false;
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: true });
+      ok = true;
+      log(`step 3 getUserMedia OK ${Math.round(performance.now() - t0)} ms, ${idle}, permission before=${before}, ${state()}`);
+      await stopAll(s);
+    } catch (e) {
+      log(`step 3 getUserMedia FAIL ${errText(e)} ${Math.round(performance.now() - t0)} ms, ${idle}, permission before=${before} after=${await permission()}, ${state()}`);
+    }
+    resultEl.className = ok ? 'ok' : 'fail';
+    resultEl.textContent = ok ? 'Camera OK' : 'NotAllowedError: camera refused without a prompt';
+  };
+
+  document.getElementById('capture').onclick = capture;
+  document.getElementById('open').onclick = open;
+  document.getElementById('openNoopener').onclick = openNoopener;
+  document.getElementById('request').onclick = request;
+  document.getElementById('copy').onclick = () => navigator.clipboard.writeText(lines.join('\n')).then(() => log('log copied'));
+  document.getElementById('reset').onclick = () => {
+    lines = [];
+    try { localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
+    resultEl.className = '';
+    resultEl.textContent = '';
+    render();
+  };
+})();
+</script>
+</body>
+</html>
